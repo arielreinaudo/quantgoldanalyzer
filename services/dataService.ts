@@ -9,29 +9,31 @@ import {
   resampleData
 } from '../lib/calculations';
 
-// Pool de proxies ampliado y rotativo para evitar bloqueos de IP
+// Pool de proxies optimizado para máxima disponibilidad
 const PROXIES = [
   (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
   (url: string) => `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(url)}`,
-  (url: string) => `https://proxy.cors.sh/${url}`, // Requiere cuidado pero útil como último recurso
 ];
 
 async function fetchWithRetry(url: string): Promise<string | null> {
-  // Barajamos proxies para no saturar siempre el mismo
+  // Añadimos un timestamp para evitar cache agresivo de proxies
+  const cacheBuster = `&cb=${Date.now()}`;
+  const finalUrl = url.includes('?') ? `${url}${cacheBuster}` : `${url}?${cacheBuster}`;
+  
+  // Barajamos proxies para cada intento
   const shuffledProxies = [...PROXIES].sort(() => Math.random() - 0.5);
   
   for (const proxyFn of shuffledProxies) {
     try {
       const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 10000); // 10s timeout
+      const id = setTimeout(() => controller.abort(), 12000); // 12s de margen
       
-      const res = await fetch(proxyFn(url), { 
+      const res = await fetch(proxyFn(finalUrl), { 
         signal: controller.signal,
         headers: { 
-          'Accept': 'text/plain, text/csv, application/json',
-          'x-cors-gr-as': 'quant-gold-app'
+          'Accept': 'text/plain, text/csv, application/json'
         }
       });
       clearTimeout(id);
@@ -39,8 +41,10 @@ async function fetchWithRetry(url: string): Promise<string | null> {
       if (!res.ok) continue;
       const text = await res.text();
       
-      // Validar que el contenido parezca CSV o JSON válido y no un error HTML del proxy
-      if (!text || text.length < 50 || text.includes('<html>') || text.includes('Error 404')) continue;
+      // Validaciones críticas de contenido
+      if (!text || text.length < 100) continue;
+      if (text.toLowerCase().includes('<html>') || text.includes('Too Many Requests') || text.includes('Rate limit')) continue;
+      if (text.includes('Error 404') || text.includes('Not Found')) continue;
 
       return text;
     } catch (e) {
@@ -52,16 +56,10 @@ async function fetchWithRetry(url: string): Promise<string | null> {
 
 async function fetchStooqData(symbol: string): Promise<PricePoint[] | null> {
   const normalized = symbol.toUpperCase().trim();
-  const variations = [];
-  
-  if (normalized === 'XAU') {
-    variations.push('XAU', 'XAUUSD', 'GOLD');
-  } else {
-    variations.push(
-      normalized.includes('.') ? normalized : `${normalized}.US`,
-      normalized
-    );
-  }
+  const variations = [
+    normalized.includes('.') ? normalized : `${normalized}.US`,
+    normalized
+  ];
 
   for (const s of variations) {
     const url = `https://stooq.com/q/d/l/?s=${s}&i=d`;
@@ -78,7 +76,7 @@ async function fetchStooqData(symbol: string): Promise<PricePoint[] | null> {
         })
         .filter((d): d is PricePoint => d !== null && d.time.length > 0);
       
-      if (data.length > 10) return data;
+      if (data.length > 5) return data;
     }
   }
   return null;
@@ -88,6 +86,7 @@ async function fetchYahooHistory(ticker: string): Promise<PricePoint[] | null> {
   const normalized = ticker.toUpperCase().trim();
   const symbolsToTry = [normalized];
   
+  // Mapeo especial para activos problemáticos
   if (normalized === 'XAU' || normalized === 'GOLD') {
     symbolsToTry.push('GC=F', 'XAUUSD=X', 'GLD');
   }
@@ -104,13 +103,19 @@ async function fetchYahooHistory(ticker: string): Promise<PricePoint[] | null> {
       const data = lines.map(line => {
         const parts = line.split(',');
         if (parts.length < 6) return null;
-        // Intentar Adj Close primero, luego Close
-        const val = parseFloat(parts[5]) || parseFloat(parts[4]);
+        
+        // Manejo de 'null' en los datos de Yahoo (Frecuente en TROW y otros)
+        const adjCloseStr = parts[5].trim();
+        const closeStr = parts[4].trim();
+        
+        const val = (adjCloseStr !== 'null' && adjCloseStr !== '') 
+          ? parseFloat(adjCloseStr) 
+          : (closeStr !== 'null' && closeStr !== '') ? parseFloat(closeStr) : NaN;
+          
         return isNaN(val) ? null : { time: parts[0].trim(), value: val };
       }).filter((d): d is PricePoint => d !== null && d.time.length > 0);
       
-      if (data.length > 10) {
-        // Si el ticker era GLD, multiplicamos para aproximar XAUUSD spot
+      if (data.length > 5) {
         if (s === 'GLD') {
           return data.map(d => ({ ...d, value: d.value * 10.15 }));
         }
@@ -188,7 +193,8 @@ async function getAssetInfo(ticker: string) {
       'AAPL': 'Apple Inc.', 'MSFT': 'Microsoft Corporation', 'GOOGL': 'Alphabet Inc. (Class A)',
       'AMZN': 'Amazon.com, Inc.', 'META': 'Meta Platforms, Inc.', 'NVDA': 'NVIDIA Corporation',
       'TSLA': 'Tesla, Inc.', 'MO': 'Altria Group, Inc.', 'EPD': 'Enterprise Products Partners L.P.',
-      'O': 'Realty Income Corporation', 'KO': 'The Coca-Cola Company', 'PEP': 'PepsiCo, Inc.'
+      'O': 'Realty Income Corporation', 'KO': 'The Coca-Cola Company', 'PEP': 'PepsiCo, Inc.',
+      'TROW': 'T. Rowe Price Group, Inc.', 'JNJ': 'Johnson & Johnson', 'PG': 'Procter & Gamble Co.'
     };
 
     if (manualMap[normalizedTicker]) {
@@ -205,27 +211,25 @@ async function getAssetInfo(ticker: string) {
 export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult> => {
   const { ticker, horizon, frequency, benchmark, lang } = params;
 
-  // 1. Obtener datos del activo a analizar
+  // Intentamos obtener datos del activo (Stooq -> Yahoo)
   let stockData = await fetchStooqData(ticker);
   if (!stockData) stockData = await fetchYahooHistory(ticker);
+  
   if (!stockData) {
-    throw new Error(lang === Language.EN ? `Price series for ${ticker} not found.` : `Serie de precios para ${ticker} no encontrada.`);
+    throw new Error(lang === Language.EN ? `Price series for ${ticker} not found. Try again in 30 seconds or check the ticker.` : `Serie de precios para ${ticker} no encontrada. Reintente en 30 segundos o verifique el ticker.`);
   }
   
-  // 2. Obtener Benchmark (SPY por defecto)
+  // Intentamos obtener Benchmark
   let spyData = await fetchStooqData(benchmark);
   if (!spyData) spyData = await fetchYahooHistory(benchmark);
   
-  // 3. Obtener ORO (Lógica de alta resiliencia)
+  // Obtener ORO
   let goldData = await fetchStooqData('XAU');
   let isGoldProxy = false;
   
   if (!goldData) {
-    // Probar Yahoo Finance con sus variaciones (Futuros y Spot)
     goldData = await fetchYahooHistory('XAU'); 
-    
     if (!goldData) {
-      // Fallback final: GLD como proxy de oro
       const gldStooq = await fetchStooqData('GLD.US');
       if (gldStooq) {
         goldData = gldStooq.map(d => ({ ...d, value: d.value * 10.15 }));
@@ -235,7 +239,7 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
   }
 
   if (!goldData) {
-    throw new Error(lang === Language.EN ? "Gold price unavailable. This is likely a network issue with data providers. Please retry in a few seconds." : "Precio del oro no disponible. Probablemente un problema de red con los proveedores. Por favor reintente en unos segundos.");
+    throw new Error(lang === Language.EN ? "Gold price service busy. Retrying now..." : "Servicio de precios de oro ocupado. Reintentando...");
   }
   
   const finalSpyData = spyData || stockData.map(d => ({ ...d, value: 1 }));
@@ -244,7 +248,6 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
   const goldMap = new Map(goldData.map(d => [d.time, d.value]));
   const spyMap = new Map(finalSpyData.map(d => [d.time, d.value]));
 
-  // Alineación y cálculo de ratios
   let lastGold = goldData[0].value;
   const ratioSeries = stockData.map(s => {
     const gVal = goldMap.get(s.time);
