@@ -69,10 +69,10 @@ const Chart: React.FC<ChartProps> = ({ data, title, overlayData, height = 450 })
 
       const mainSeries = chart.addLineSeries({
         color: '#2563eb',
-        lineWidth: 2.5,
+        lineWidth: 2, // Corregido de 2.5 a 2
         priceLineVisible: true,
         lastValueVisible: true,
-        title: '', // Removed 'Ratio' to prevent label overlap on the axis
+        title: '',
       });
 
       mainSeries.setData(uniqueData);
@@ -82,7 +82,7 @@ const Chart: React.FC<ChartProps> = ({ data, title, overlayData, height = 450 })
           const isLongTerm = overlay.name.toLowerCase().includes('w');
           const s = chart.addLineSeries({
             color: overlay.color,
-            lineWidth: isLongTerm ? 1 : 1.2, 
+            lineWidth: 1, // Corregido para evitar decimales incompatibles
             lineStyle: LineStyle.Solid,
             priceLineVisible: false,
             lastValueVisible: false,
@@ -137,7 +137,7 @@ const Chart: React.FC<ChartProps> = ({ data, title, overlayData, height = 450 })
             <div key={idx} className="flex items-center gap-2">
               <span 
                 className={`w-4 h-0.5 rounded-full`} 
-                style={{ backgroundColor: o.color, height: o.name.toLowerCase().includes('w') ? '1px' : '1.5px' }}
+                style={{ backgroundColor: o.color, height: '1px' }}
               ></span>
               <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">{o.name}</span>
             </div>

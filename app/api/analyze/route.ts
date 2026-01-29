@@ -1,6 +1,6 @@
 
-import { NextResponse } from 'next/server';
-
 export async function GET() {
-  return NextResponse.json({ message: "Logic moved to client-side service for environment compatibility." });
+  return new Response(JSON.stringify({ message: "Logic moved to client-side service for environment compatibility." }), {
+    headers: { 'content-type': 'application/json' },
+  });
 }
