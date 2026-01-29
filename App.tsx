@@ -28,18 +28,15 @@ const App: React.FC = () => {
   };
 
   const handleAnalyze = async (params: AnalysisParams) => {
-    // NUCLEAR RESET: Clear everything before starting
     setResult(null);
     setError(null);
     setLoading(true);
 
     try {
-      // Small timeout to allow React to clear the DOM and show loading state
       await new Promise(resolve => setTimeout(resolve, 100));
-      
       const data = await analyzeTicker({ ...params, lang });
       setResult(data);
-      setAnalysisKey(prev => prev + 1); // Force re-mount of all data-dependent components
+      setAnalysisKey(prev => prev + 1);
       setError(null);
     } catch (err: any) {
       setError(err.message || (isEn ? 'Failed to fetch data.' : 'Error al obtener datos.'));
@@ -72,24 +69,44 @@ const App: React.FC = () => {
             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-sm">
               <span className="text-white font-black">Q</span>
             </div>
-            <h1 className="text-xl font-extrabold tracking-tight text-gray-900">QuantGold</h1>
+            <h1 className="text-xl font-extrabold tracking-tight text-gray-900 hidden sm:block">QuantGold</h1>
           </div>
           
           <div className="flex items-center space-x-2 md:space-x-4">
-            <nav className="flex items-center space-x-2">
+            <nav className="flex items-center space-x-1 sm:space-x-2">
               <button 
                 onClick={() => setActiveTab('charts')}
-                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${activeTab === 'charts' ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'charts' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:text-gray-800'}`}
               >
-                {isEn ? 'Dashboard' : 'Panel'}
+                {isEn ? 'DASHBOARD' : 'PANEL'}
               </button>
               <button 
                 onClick={() => setActiveTab('report')}
-                className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${activeTab === 'report' ? 'bg-blue-50 text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${activeTab === 'report' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 hover:text-gray-800'}`}
               >
-                {isEn ? 'Report' : 'Reporte'}
+                {isEn ? 'REPORT' : 'REPORTE'}
               </button>
             </nav>
+
+            {/* BOTÓN DE DESCARGA DE PDF REESTABLECIDO */}
+            {activeTab === 'report' && result && (
+              <button
+                onClick={triggerDownloadPDF}
+                disabled={isGeneratingPDF}
+                className="flex items-center gap-2 px-3 sm:px-4 py-1.5 bg-gray-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all shadow-md active:scale-95 disabled:bg-gray-400"
+              >
+                {isGeneratingPDF ? (
+                  <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                )}
+                <span className="hidden xs:inline">
+                  {isGeneratingPDF ? (isEn ? 'BUSY...' : 'ESPERE...') : (isEn ? 'PDF' : 'PDF')}
+                </span>
+              </button>
+            )}
 
             <div className="flex items-center bg-gray-100 p-1 rounded-lg">
               <button 

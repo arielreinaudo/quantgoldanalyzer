@@ -9,45 +9,41 @@ import {
   resampleData
 } from '../lib/calculations';
 
-// Increased proxy pool for higher availability
+// Pool de proxies ampliado y rotativo para evitar bloqueos de IP
 const PROXIES = [
   (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
   (url: string) => `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(url)}`,
+  (url: string) => `https://proxy.cors.sh/${url}`, // Requiere cuidado pero útil como último recurso
 ];
 
 async function fetchWithRetry(url: string): Promise<string | null> {
-  // Try all proxies in sequence
-  for (const proxyFn of PROXIES) {
+  // Barajamos proxies para no saturar siempre el mismo
+  const shuffledProxies = [...PROXIES].sort(() => Math.random() - 0.5);
+  
+  for (const proxyFn of shuffledProxies) {
     try {
-      console.log(`Attempting fetch: ${url} via ${proxyFn.name || 'anonymous proxy'}`);
       const controller = new AbortController();
       const id = setTimeout(() => controller.abort(), 10000); // 10s timeout
       
       const res = await fetch(proxyFn(url), { 
         signal: controller.signal,
-        headers: {
-          'Accept': 'text/plain, text/csv, application/json'
+        headers: { 
+          'Accept': 'text/plain, text/csv, application/json',
+          'x-cors-gr-as': 'quant-gold-app'
         }
       });
       clearTimeout(id);
       
-      if (!res.ok) {
-        console.warn(`Proxy failed with status: ${res.status}`);
-        continue;
-      }
-      
+      if (!res.ok) continue;
       const text = await res.text();
       
-      // Basic validation of response content
-      if (!text || text.length < 50 || text.includes('Error 404') || text.includes('Invalid Symbol')) {
-        continue;
-      }
+      // Validar que el contenido parezca CSV o JSON válido y no un error HTML del proxy
+      if (!text || text.length < 50 || text.includes('<html>') || text.includes('Error 404')) continue;
 
       return text;
     } catch (e) {
-      console.error(`Proxy attempt failed:`, e);
       continue;
     }
   }
@@ -56,15 +52,16 @@ async function fetchWithRetry(url: string): Promise<string | null> {
 
 async function fetchStooqData(symbol: string): Promise<PricePoint[] | null> {
   const normalized = symbol.toUpperCase().trim();
+  const variations = [];
   
-  // Stooq specific suffix mapping
-  const variations = [
-    normalized.includes('.') ? normalized : `${normalized}.US`, // Try US first for 2-3 letter tickers
-    normalized, // Try raw
-    `${normalized}.UK`,
-    `${normalized}.PT`, // For Portuguese stocks like EDP
-    `${normalized}.LS`  // Lisbon
-  ];
+  if (normalized === 'XAU') {
+    variations.push('XAU', 'XAUUSD', 'GOLD');
+  } else {
+    variations.push(
+      normalized.includes('.') ? normalized : `${normalized}.US`,
+      normalized
+    );
+  }
 
   for (const s of variations) {
     const url = `https://stooq.com/q/d/l/?s=${s}&i=d`;
@@ -81,10 +78,7 @@ async function fetchStooqData(symbol: string): Promise<PricePoint[] | null> {
         })
         .filter((d): d is PricePoint => d !== null && d.time.length > 0);
       
-      if (data.length > 10) {
-        console.log(`Successfully fetched ${data.length} points for ${s} from Stooq`);
-        return data;
-      }
+      if (data.length > 10) return data;
     }
   }
   return null;
@@ -92,30 +86,34 @@ async function fetchStooqData(symbol: string): Promise<PricePoint[] | null> {
 
 async function fetchYahooHistory(ticker: string): Promise<PricePoint[] | null> {
   const normalized = ticker.toUpperCase().trim();
-  // Yahoo specific handling
-  const symbolsToTry = [
-    normalized,
-    normalized === 'XAU' ? 'GC=F' : normalized, // Map gold if needed
-  ];
+  const symbolsToTry = [normalized];
+  
+  if (normalized === 'XAU' || normalized === 'GOLD') {
+    symbolsToTry.push('GC=F', 'XAUUSD=X', 'GLD');
+  }
 
   const now = Math.floor(Date.now() / 1000);
-  const start = now - (18 * 365 * 24 * 60 * 60); // 18 years
+  const start = now - (18 * 365 * 24 * 60 * 60);
 
   for (const s of symbolsToTry) {
     const url = `https://query1.finance.yahoo.com/v7/finance/download/${s}?period1=${start}&period2=${now}&interval=1d&events=history&includeAdjustedClose=true`;
     const text = await fetchWithRetry(url);
     
-    if (text && text.includes('Date,Open,High,Low,Close,Adj Close')) {
+    if (text && text.includes('Date,Open,High,Low,Close')) {
       const lines = text.split('\n').slice(1);
       const data = lines.map(line => {
         const parts = line.split(',');
-        if (parts.length < 7) return null;
-        const val = parseFloat(parts[5]); // Adj Close
+        if (parts.length < 6) return null;
+        // Intentar Adj Close primero, luego Close
+        const val = parseFloat(parts[5]) || parseFloat(parts[4]);
         return isNaN(val) ? null : { time: parts[0].trim(), value: val };
       }).filter((d): d is PricePoint => d !== null && d.time.length > 0);
       
       if (data.length > 10) {
-        console.log(`Successfully fetched ${data.length} points for ${s} from Yahoo`);
+        // Si el ticker era GLD, multiplicamos para aproximar XAUUSD spot
+        if (s === 'GLD') {
+          return data.map(d => ({ ...d, value: d.value * 10.15 }));
+        }
         return data;
       }
     }
@@ -140,13 +138,24 @@ async function getAssetInfo(ticker: string) {
         const quoteJson = JSON.parse(quoteRaw);
         const result = quoteJson.quoteResponse?.result?.[0];
         if (result) {
-          assetName = result.longName || result.shortName || ticker;
+          assetName = result.longName || result.shortName || result.displayName || ticker;
           metrics.yield = result.trailingAnnualDividendYield || result.dividendYield || 0;
-          if (metrics.yield === 0 && result.trailingAnnualDividendRate > 0) {
-            metrics.yield = result.trailingAnnualDividendRate / (result.regularMarketPrice || 1);
-          }
         }
-      } catch (e) { /* ignore parse error */ }
+      } catch (e) {}
+    }
+
+    if (assetName === ticker) {
+      const searchUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${ticker}&quotesCount=1`;
+      const searchRaw = await fetchWithRetry(searchUrl);
+      if (searchRaw) {
+        try {
+          const searchJson = JSON.parse(searchRaw);
+          const firstResult = searchJson.quotes?.[0];
+          if (firstResult) {
+            assetName = firstResult.longname || firstResult.shortname || ticker;
+          }
+        } catch (e) {}
+      }
     }
 
     const modules = "summaryDetail,defaultKeyStatistics,financialData";
@@ -171,19 +180,23 @@ async function getAssetInfo(ticker: string) {
           metrics.fundamentals.debtEbitda = fd.debtToEbitda?.raw || (fd.totalDebt?.raw && fd.ebitda?.raw ? fd.totalDebt.raw / fd.ebitda.raw : 0);
           metrics.fundamentals.interestCoverage = fd.ebitda?.raw && fd.totalDebt?.raw ? (fd.ebitda.raw / (fd.totalDebt.raw * 0.05)) : 5;
         }
-      } catch (e) { /* ignore parse error */ }
+      } catch (e) {}
     }
 
-    // Emergency manual fallbacks for common tickers to ensure UI is never 0
     const normalizedTicker = ticker.split('.')[0].toUpperCase();
-    if (normalizedTicker === 'MO') { metrics.yield = 0.082; metrics.dgr = 0.045; metrics.fundamentals = { payoutEPS: 78, payoutFCF: 82, debtEbitda: 2.1, interestCoverage: 9.5 }; assetName = "Altria Group, Inc."; }
-    if (normalizedTicker === 'EPD') { metrics.yield = 0.072; metrics.dgr = 0.05; metrics.fundamentals = { payoutEPS: 85, payoutFCF: 75, debtEbitda: 3.2, interestCoverage: 5 }; }
-    if (normalizedTicker === 'O') { metrics.yield = 0.055; metrics.dgr = 0.04; metrics.fundamentals = { payoutEPS: 88, payoutFCF: 80, debtEbitda: 5.4, interestCoverage: 4.5 }; }
-    if (normalizedTicker === 'AAPL') { metrics.yield = 0.005; metrics.dgr = 0.08; metrics.fundamentals = { payoutEPS: 15, payoutFCF: 12, debtEbitda: 0.8, interestCoverage: 40 }; }
-    if (normalizedTicker === 'EDP' || normalizedTicker === 'EDPFY') { metrics.yield = 0.045; metrics.dgr = 0.03; metrics.fundamentals = { payoutEPS: 70, payoutFCF: 65, debtEbitda: 3.5, interestCoverage: 3.8 }; }
+    const manualMap: Record<string, string> = {
+      'AAPL': 'Apple Inc.', 'MSFT': 'Microsoft Corporation', 'GOOGL': 'Alphabet Inc. (Class A)',
+      'AMZN': 'Amazon.com, Inc.', 'META': 'Meta Platforms, Inc.', 'NVDA': 'NVIDIA Corporation',
+      'TSLA': 'Tesla, Inc.', 'MO': 'Altria Group, Inc.', 'EPD': 'Enterprise Products Partners L.P.',
+      'O': 'Realty Income Corporation', 'KO': 'The Coca-Cola Company', 'PEP': 'PepsiCo, Inc.'
+    };
+
+    if (manualMap[normalizedTicker]) {
+      assetName = manualMap[normalizedTicker];
+    }
 
   } catch (e) {
-    console.warn("Fundamental extraction failed, using fallback data.");
+    console.warn("Fundamental extraction failed.");
   }
 
   return { name: assetName, metrics };
@@ -192,32 +205,38 @@ async function getAssetInfo(ticker: string) {
 export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult> => {
   const { ticker, horizon, frequency, benchmark, lang } = params;
 
-  // Attempt different sources sequentially for maximum reliability
+  // 1. Obtener datos del activo a analizar
   let stockData = await fetchStooqData(ticker);
   if (!stockData) stockData = await fetchYahooHistory(ticker);
-  
   if (!stockData) {
-    throw new Error(lang === Language.EN ? `Price series for ${ticker} not found. Please try a different source or verify the symbol.` : `Serie de precios para ${ticker} no encontrada. Por favor intente con otra fuente o verifique el símbolo.`);
+    throw new Error(lang === Language.EN ? `Price series for ${ticker} not found.` : `Serie de precios para ${ticker} no encontrada.`);
   }
   
+  // 2. Obtener Benchmark (SPY por defecto)
   let spyData = await fetchStooqData(benchmark);
   if (!spyData) spyData = await fetchYahooHistory(benchmark);
   
-  // GOLD logic
+  // 3. Obtener ORO (Lógica de alta resiliencia)
   let goldData = await fetchStooqData('XAU');
   let isGoldProxy = false;
+  
   if (!goldData) {
-    goldData = await fetchYahooHistory('GC=F');
+    // Probar Yahoo Finance con sus variaciones (Futuros y Spot)
+    goldData = await fetchYahooHistory('XAU'); 
+    
     if (!goldData) {
-      const gld = await fetchStooqData('GLD.US');
-      if (gld) {
-        goldData = gld.map(d => ({ ...d, value: d.value * 10.15 }));
+      // Fallback final: GLD como proxy de oro
+      const gldStooq = await fetchStooqData('GLD.US');
+      if (gldStooq) {
+        goldData = gldStooq.map(d => ({ ...d, value: d.value * 10.15 }));
         isGoldProxy = true;
       }
     }
   }
 
-  if (!goldData) throw new Error(lang === Language.EN ? "Gold price unavailable. Markets might be closed or service interrupted." : "Precio del oro no disponible. Los mercados podrían estar cerrados.");
+  if (!goldData) {
+    throw new Error(lang === Language.EN ? "Gold price unavailable. This is likely a network issue with data providers. Please retry in a few seconds." : "Precio del oro no disponible. Probablemente un problema de red con los proveedores. Por favor reintente en unos segundos.");
+  }
   
   const finalSpyData = spyData || stockData.map(d => ({ ...d, value: 1 }));
   const info = await getAssetInfo(ticker);
@@ -225,7 +244,7 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
   const goldMap = new Map(goldData.map(d => [d.time, d.value]));
   const spyMap = new Map(finalSpyData.map(d => [d.time, d.value]));
 
-  // Efficient alignment
+  // Alineación y cálculo de ratios
   let lastGold = goldData[0].value;
   const ratioSeries = stockData.map(s => {
     const gVal = goldMap.get(s.time);
@@ -253,7 +272,6 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
   const { yield: y, dgr: d, fundamentals: funds } = info.metrics;
   const chowderNo = (y + d) * 100;
   
-  // Qualitative scores calculation
   const engineScore = Math.min(5, (d * 100) / 2.5);
   let moatScore = 1.5;
   if (y > 0.025 && d > 0.08) moatScore = 5.0;
