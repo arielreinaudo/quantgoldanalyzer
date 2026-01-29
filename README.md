@@ -1,11 +1,34 @@
-<div align="center">
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+# GoldRatio Quant Analyzer
 
-  <h1>Built with AI Studio</h2>
+Professional-grade web application to analyze stock tickers relative to Gold (XAUUSD). Built with Next.js 14, TypeScript, and TradingView Lightweight Charts.
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## Features
+- **Stock-to-Gold Ratio**: Valuation in real hard assets.
+- **Percentile Analysis**: Historical ranking of current valuation.
+- **Trend Signals**: SMA 200 days and SMA 200 weeks.
+- **Reporting**: Automated Markdown and PDF export.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Installation
+1. Install dependencies:
+   ```bash
+   npm install
+   ```
+2. Start development server:
+   ```bash
+   npm run dev
+   ```
 
-</div>
+## Data Sources
+- **Stooq**: Primary source for historical CSV data (No API key needed).
+- **Yahoo Finance**: Fallback for international tickers.
+- **Gold Proxy**: Uses GLD if XAUUSD spot is not found.
+
+## Deployment on Netlify
+1. Connect your repository to Netlify.
+2. Set build command: `npm run build`.
+3. Set publish directory: `dist`.
+4. Ensure `netlify.toml` is present for SPA routing.
+
+## Environmental Variables
+- `API_KEY`: (Optional) If using AlphaVantage or Polygon as providers.

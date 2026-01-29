@@ -1,0 +1,5 @@
+{
+  "name": "GoldRatio Quant Analyzer",
+  "description": "Professional quantitative tool for analyzing stock tickers relative to gold (XAU/USD), including percentiles, moving averages, and automated reporting.",
+  "requestFramePermissions": []
+}
