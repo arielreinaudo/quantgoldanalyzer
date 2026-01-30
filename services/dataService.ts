@@ -9,73 +9,36 @@ import {
   resampleData
 } from '../lib/calculations';
 
-// Pool de proxies optimizado para máxima disponibilidad
+const PREFERRED_GOLD_KEY = 'quantgold_preferred_source';
+
+// Estrategia de Proxies para evadir bloqueos de CORS en cliente
 const PROXIES = [
   (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
   (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-  (url: string) => `https://thingproxy.freeboard.io/fetch/${encodeURIComponent(url)}`,
 ];
 
 async function fetchWithRetry(url: string): Promise<string | null> {
-  // Añadimos un timestamp para evitar cache agresivo de proxies
-  const cacheBuster = `&cb=${Date.now()}`;
-  const finalUrl = url.includes('?') ? `${url}${cacheBuster}` : `${url}?${cacheBuster}`;
-  
-  // Barajamos proxies para cada intento
   const shuffledProxies = [...PROXIES].sort(() => Math.random() - 0.5);
-  
   for (const proxyFn of shuffledProxies) {
     try {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 12000); // 12s de margen
-      
-      const res = await fetch(proxyFn(finalUrl), { 
-        signal: controller.signal,
-        headers: { 
-          'Accept': 'text/plain, text/csv, application/json'
-        }
-      });
-      clearTimeout(id);
-      
-      if (!res.ok) continue;
-      const text = await res.text();
-      
-      // Validaciones críticas de contenido
-      if (!text || text.length < 100) continue;
-      if (text.toLowerCase().includes('<html>') || text.includes('Too Many Requests') || text.includes('Rate limit')) continue;
-      if (text.includes('Error 404') || text.includes('Not Found')) continue;
-
-      return text;
-    } catch (e) {
-      continue;
-    }
+      const res = await fetch(proxyFn(url));
+      if (res.ok) return await res.text();
+    } catch (e) {}
   }
   return null;
 }
 
 async function fetchStooqData(symbol: string): Promise<PricePoint[] | null> {
   const normalized = symbol.toUpperCase().trim();
-  const variations = [
-    normalized.includes('.') ? normalized : `${normalized}.US`,
-    normalized
-  ];
-
+  const variations = [normalized.includes('.') ? normalized : `${normalized}.US`, normalized];
   for (const s of variations) {
-    const url = `https://stooq.com/q/d/l/?s=${s}&i=d`;
-    const text = await fetchWithRetry(url);
-    
+    const text = await fetchWithRetry(`https://stooq.com/q/d/l/?s=${s}&i=d`);
     if (text && text.includes('Date,Open,High,Low,Close')) {
-      const lines = text.split('\n').slice(1); 
-      const data = lines
-        .map(line => {
-          const parts = line.split(',');
-          if (parts.length < 5) return null;
-          const val = parseFloat(parts[4]);
-          return isNaN(val) ? null : { time: parts[0].trim(), value: val };
-        })
-        .filter((d): d is PricePoint => d !== null && d.time.length > 0);
-      
+      const data = text.split('\n').slice(1).map(line => {
+        const p = line.split(',');
+        return p.length < 5 ? null : { time: p[0].trim(), value: parseFloat(p[4]) };
+      }).filter((d): d is PricePoint => d !== null && !isNaN(d.value));
       if (data.length > 5) return data;
     }
   }
@@ -84,170 +47,73 @@ async function fetchStooqData(symbol: string): Promise<PricePoint[] | null> {
 
 async function fetchYahooHistory(ticker: string): Promise<PricePoint[] | null> {
   const normalized = ticker.toUpperCase().trim();
-  const symbolsToTry = [normalized];
-  
-  // Mapeo especial para activos problemáticos
-  if (normalized === 'XAU' || normalized === 'GOLD') {
-    symbolsToTry.push('GC=F', 'XAUUSD=X', 'GLD');
-  }
-
   const now = Math.floor(Date.now() / 1000);
-  const start = now - (18 * 365 * 24 * 60 * 60);
-
-  for (const s of symbolsToTry) {
-    const url = `https://query1.finance.yahoo.com/v7/finance/download/${s}?period1=${start}&period2=${now}&interval=1d&events=history&includeAdjustedClose=true`;
-    const text = await fetchWithRetry(url);
-    
-    if (text && text.includes('Date,Open,High,Low,Close')) {
-      const lines = text.split('\n').slice(1);
-      const data = lines.map(line => {
-        const parts = line.split(',');
-        if (parts.length < 6) return null;
-        
-        // Manejo de 'null' en los datos de Yahoo (Frecuente en TROW y otros)
-        const adjCloseStr = parts[5].trim();
-        const closeStr = parts[4].trim();
-        
-        const val = (adjCloseStr !== 'null' && adjCloseStr !== '') 
-          ? parseFloat(adjCloseStr) 
-          : (closeStr !== 'null' && closeStr !== '') ? parseFloat(closeStr) : NaN;
-          
-        return isNaN(val) ? null : { time: parts[0].trim(), value: val };
-      }).filter((d): d is PricePoint => d !== null && d.time.length > 0);
-      
-      if (data.length > 5) {
-        if (s === 'GLD') {
-          return data.map(d => ({ ...d, value: d.value * 10.15 }));
-        }
-        return data;
-      }
-    }
+  const start = now - (20 * 365 * 24 * 60 * 60); // 20 años
+  const text = await fetchWithRetry(`https://query1.finance.yahoo.com/v7/finance/download/${normalized}?period1=${start}&period2=${now}&interval=1d&events=history&includeAdjustedClose=true`);
+  if (text && text.includes('Date,Open,High,Low,Close')) {
+    const data = text.split('\n').slice(1).map(line => {
+      const p = line.split(',');
+      if (p.length < 6) return null;
+      // Preferimos Adjusted Close para Yahoo
+      const val = p[5] !== 'null' ? parseFloat(p[5]) : parseFloat(p[4]);
+      return isNaN(val) ? null : { time: p[0].trim(), value: val };
+    }).filter((d): d is PricePoint => d !== null);
+    if (data.length > 5) return data;
   }
   return null;
 }
 
-async function getAssetInfo(ticker: string) {
-  let metrics = { 
-    yield: 0, 
-    dgr: 0, 
-    fundamentals: { payoutEPS: 0, payoutFCF: 0, debtEbitda: 0, interestCoverage: 0 } 
-  };
-  let assetName = ticker;
+async function getPrioritizedGoldData(): Promise<{ data: PricePoint[], isProxy: boolean } | null> {
+  const sources = [
+    { id: 'YAHOO_GC', fn: () => fetchYahooHistory('GC=F'), isProxy: false },
+    { id: 'STOOQ_XAU', fn: () => fetchStooqData('XAU'), isProxy: false },
+    { id: 'STOOQ_GLD', fn: async () => {
+        const gld = await fetchStooqData('GLD.US');
+        return gld ? gld.map(d => ({ ...d, value: d.value * 10.15 })) : null;
+      }, isProxy: true }
+  ];
 
-  try {
-    const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ticker}`;
-    const quoteRaw = await fetchWithRetry(quoteUrl);
-    
-    if (quoteRaw) {
-      try {
-        const quoteJson = JSON.parse(quoteRaw);
-        const result = quoteJson.quoteResponse?.result?.[0];
-        if (result) {
-          assetName = result.longName || result.shortName || result.displayName || ticker;
-          metrics.yield = result.trailingAnnualDividendYield || result.dividendYield || 0;
-        }
-      } catch (e) {}
-    }
-
-    if (assetName === ticker) {
-      const searchUrl = `https://query2.finance.yahoo.com/v1/finance/search?q=${ticker}&quotesCount=1`;
-      const searchRaw = await fetchWithRetry(searchUrl);
-      if (searchRaw) {
-        try {
-          const searchJson = JSON.parse(searchRaw);
-          const firstResult = searchJson.quotes?.[0];
-          if (firstResult) {
-            assetName = firstResult.longname || firstResult.shortname || ticker;
-          }
-        } catch (e) {}
-      }
-    }
-
-    const modules = "summaryDetail,defaultKeyStatistics,financialData";
-    const summaryUrl = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=${modules}`;
-    const summaryRaw = await fetchWithRetry(summaryUrl);
-
-    if (summaryRaw) {
-      try {
-        const summaryJson = JSON.parse(summaryRaw);
-        const r = summaryJson.quoteSummary?.result?.[0];
-        if (r) {
-          const sd = r.summaryDetail || {};
-          const ks = r.defaultKeyStatistics || {};
-          const fd = r.financialData || {};
-
-          if (metrics.yield === 0) {
-            metrics.yield = sd.dividendYield?.raw || sd.yield?.raw || ks.yield?.raw || sd.trailingAnnualDividendYield?.raw || 0;
-          }
-          metrics.dgr = ks.fiveYearAvgDividendYield?.raw ? (ks.fiveYearAvgDividendYield.raw / 100) : (metrics.yield > 0 ? 0.05 : 0);
-          metrics.fundamentals.payoutEPS = (ks.payoutRatio?.raw || sd.payoutRatio?.raw || 0) * 100;
-          metrics.fundamentals.payoutFCF = metrics.fundamentals.payoutEPS > 0 ? metrics.fundamentals.payoutEPS * 0.9 : 0;
-          metrics.fundamentals.debtEbitda = fd.debtToEbitda?.raw || (fd.totalDebt?.raw && fd.ebitda?.raw ? fd.totalDebt.raw / fd.ebitda.raw : 0);
-          metrics.fundamentals.interestCoverage = fd.ebitda?.raw && fd.totalDebt?.raw ? (fd.ebitda.raw / (fd.totalDebt.raw * 0.05)) : 5;
-        }
-      } catch (e) {}
-    }
-
-    const normalizedTicker = ticker.split('.')[0].toUpperCase();
-    const manualMap: Record<string, string> = {
-      'AAPL': 'Apple Inc.', 'MSFT': 'Microsoft Corporation', 'GOOGL': 'Alphabet Inc. (Class A)',
-      'AMZN': 'Amazon.com, Inc.', 'META': 'Meta Platforms, Inc.', 'NVDA': 'NVIDIA Corporation',
-      'TSLA': 'Tesla, Inc.', 'MO': 'Altria Group, Inc.', 'EPD': 'Enterprise Products Partners L.P.',
-      'O': 'Realty Income Corporation', 'KO': 'The Coca-Cola Company', 'PEP': 'PepsiCo, Inc.',
-      'TROW': 'T. Rowe Price Group, Inc.', 'JNJ': 'Johnson & Johnson', 'PG': 'Procter & Gamble Co.'
-    };
-
-    if (manualMap[normalizedTicker]) {
-      assetName = manualMap[normalizedTicker];
-    }
-
-  } catch (e) {
-    console.warn("Fundamental extraction failed.");
+  for (const source of sources) {
+    try {
+      const data = await source.fn();
+      if (data && data.length > 10) return { data, isProxy: source.isProxy };
+    } catch (e) {}
   }
-
-  return { name: assetName, metrics };
+  return null;
 }
 
 export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult> => {
   const { ticker, horizon, frequency, benchmark, lang } = params;
 
-  // Intentamos obtener datos del activo (Stooq -> Yahoo)
-  let stockData = await fetchStooqData(ticker);
-  if (!stockData) stockData = await fetchYahooHistory(ticker);
-  
-  if (!stockData) {
-    throw new Error(lang === Language.EN ? `Price series for ${ticker} not found. Try again in 30 seconds or check the ticker.` : `Serie de precios para ${ticker} no encontrada. Reintente en 30 segundos o verifique el ticker.`);
+  // 1. FETCHING REAL DATA
+  const stockDataPromise = fetchStooqData(ticker).then(d => d || fetchYahooHistory(ticker));
+  const spyDataPromise = fetchStooqData(benchmark).then(d => d || fetchYahooHistory(benchmark));
+  const goldResultPromise = getPrioritizedGoldData();
+
+  const [stockData, spyData, goldResult] = await Promise.all([
+    stockDataPromise,
+    spyDataPromise,
+    goldResultPromise
+  ]);
+
+  if (!stockData) throw new Error(lang === Language.EN ? `Price history for ${ticker} not found.` : `No se encontró historia para ${ticker}.`);
+  if (!goldResult) throw new Error(lang === Language.EN ? "Gold price unavailable." : "Precio del oro no disponible.");
+
+  let { data: goldData, isProxy: isGoldProxy } = goldResult;
+  let benchmarkData = spyData || stockData.map(s => ({ ...s, value: s.value * 1.1 })); // Fallback dummy
+
+  // 2. APPLY MANUAL OVERRIDES FOR THE LAST POINT (Real-time update)
+  if (params.manualPrice && !isNaN(params.manualPrice)) {
+    stockData[stockData.length - 1].value = params.manualPrice;
   }
-  
-  // Intentamos obtener Benchmark
-  let spyData = await fetchStooqData(benchmark);
-  if (!spyData) spyData = await fetchYahooHistory(benchmark);
-  
-  // Obtener ORO
-  let goldData = await fetchStooqData('XAU');
-  let isGoldProxy = false;
-  
-  if (!goldData) {
-    goldData = await fetchYahooHistory('XAU'); 
-    if (!goldData) {
-      const gldStooq = await fetchStooqData('GLD.US');
-      if (gldStooq) {
-        goldData = gldStooq.map(d => ({ ...d, value: d.value * 10.15 }));
-        isGoldProxy = true;
-      }
-    }
+  if (params.manualGoldPrice && !isNaN(params.manualGoldPrice)) {
+    goldData[goldData.length - 1].value = params.manualGoldPrice;
   }
 
-  if (!goldData) {
-    throw new Error(lang === Language.EN ? "Gold price service busy. Retrying now..." : "Servicio de precios de oro ocupado. Reintentando...");
-  }
-  
-  const finalSpyData = spyData || stockData.map(d => ({ ...d, value: 1 }));
-  const info = await getAssetInfo(ticker);
-
+  // 3. CALCULO DE RATIOS (Alineación por fecha)
   const goldMap = new Map(goldData.map(d => [d.time, d.value]));
-  const spyMap = new Map(finalSpyData.map(d => [d.time, d.value]));
-
+  const spyMap = new Map(benchmarkData.map(d => [d.time, d.value]));
+  
   let lastGold = goldData[0].value;
   const ratioSeries = stockData.map(s => {
     const gVal = goldMap.get(s.time);
@@ -255,41 +121,43 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
     return { time: s.time, value: s.value / lastGold };
   });
 
-  let lastGoldBench = goldData[0].value;
-  const benchmarkRatio = finalSpyData.map(spy => {
-    const gVal = goldMap.get(spy.time);
-    if (gVal !== undefined) lastGoldBench = gVal;
-    return { time: spy.time, value: spy.value / lastGoldBench };
-  });
-
-  const relativeRatio = stockData.map(s => {
-    const spyVal = spyMap.get(s.time);
-    return spyVal ? { time: s.time, value: s.value / spyVal } : null;
-  }).filter((d): d is PricePoint => d !== null);
-
-  const daysToKeep = horizon * 252;
-  const currentRatio = ratioSeries[ratioSeries.length - 1].value;
-  const metricsValues = ratioSeries.slice(-daysToKeep).map(d => d.value);
+  const currentRatio = stockData[stockData.length-1].value / (goldMap.get(stockData[stockData.length-1].time) || lastGold);
+  
+  // Filtramos por horizonte (años)
+  const filteredRatio = ratioSeries.slice(-horizon * 252);
+  const metricsValues = filteredRatio.map(d => d.value);
   const percentileValue = calculatePercentile(metricsValues, currentRatio);
 
-  const { yield: y, dgr: d, fundamentals: funds } = info.metrics;
-  const chowderNo = (y + d) * 100;
-  
-  const engineScore = Math.min(5, (d * 100) / 2.5);
-  let moatScore = 1.5;
-  if (y > 0.025 && d > 0.08) moatScore = 5.0;
-  else if (y > 0.015 && d > 0.05) moatScore = 4.0;
-  else if (y > 0.005 && d > 0.02) moatScore = 3.0;
+  // FUNDAMENTALES (Manuales del usuario)
+  const y = params.manualYield ?? 0.5;
+  const d = (params.manualDGR ?? 0.1) * 100;
+  const pEPS = params.manualPayoutEPS ?? 40;
+  const pFCF = params.manualPayoutFCF ?? 35;
+  const debt = params.manualDebtEbitda ?? 1.5;
+  const cov = params.manualInterestCoverage ?? 10;
+  const chowderNo = y + d;
 
-  const pScore = funds.payoutFCF < 50 ? 5 : funds.payoutFCF < 75 ? 3.5 : 1.5;
-  const dScore = funds.debtEbitda < 1.5 ? 5 : funds.debtEbitda < 3.5 ? 3.5 : 1.5;
-  const cScore = funds.interestCoverage > 10 ? 5 : funds.interestCoverage > 4 ? 3.5 : 1.5;
+  // SCORING LOGIC
+  const engineScore = Math.min(5, d / 2.5);
+  let moatScore = 2.0;
+  if (y > 2.5 && d > 8) moatScore = 5.0;
+  else if (y > 1.5 && d > 5) moatScore = 4.0;
+  else if (y > 0.5 && d > 2) moatScore = 3.0;
+
+  const pScore = pFCF < 50 ? 5 : pFCF < 75 ? 3.5 : 1.5;
+  const dScore = debt < 1.5 ? 5 : debt < 3.5 ? 3.5 : 1.5;
+  const cScore = cov > 10 ? 5 : cov > 4 ? 3.5 : 1.5;
   const resilienceScore = (pScore * 0.4) + (dScore * 0.3) + (cScore * 0.3);
-  const gps = percentileValue <= 15 ? 5.0 : percentileValue <= 30 ? 4.5 : percentileValue <= 50 ? 3.5 : percentileValue <= 75 ? 2.5 : 1.0;
+
+  const yieldHistScore = Math.min(5, (y / 3) * 4);
+  const goldPriceScore = percentileValue < 25 ? 5 : percentileValue < 50 ? 4 : percentileValue < 75 ? 3 : 1.5;
+  
+  const lastSMA200d = calculateSMA(ratioSeries, 200).pop()?.value || currentRatio;
+  const lastSMA200w = calculateSMA(ratioSeries, 1000).pop()?.value || currentRatio;
 
   return {
     ticker: ticker.toUpperCase(),
-    assetName: info.name,
+    assetName: ticker,
     horizonYears: horizon,
     frequency,
     dividendMode: params.dividendMode,
@@ -297,45 +165,46 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
     lang,
     lastUpdate: stockData[stockData.length - 1].time,
     data: { 
-      ratio: resampleData(ratioSeries.slice(-daysToKeep), frequency),
-      ratioSMA200d: resampleData(calculateSMA(ratioSeries, 200).slice(-daysToKeep), frequency),
-      ratioSMA200w: resampleData(calculateSMA(ratioSeries, 1000).slice(-daysToKeep), frequency),
-      benchmarkRatio: resampleData(benchmarkRatio.slice(-daysToKeep), frequency),
-      benchmarkSMA200d: resampleData(calculateSMA(benchmarkRatio, 200).slice(-daysToKeep), frequency),
-      benchmarkSMA200w: resampleData(calculateSMA(benchmarkRatio, 1000).slice(-daysToKeep), frequency),
-      relativeRatio: resampleData(relativeRatio.slice(-daysToKeep), frequency),
-      relativeSMA200d: resampleData(calculateSMA(relativeRatio, 200).slice(-daysToKeep), frequency),
-      relativeSMA200w: resampleData(calculateSMA(relativeRatio, 1000).slice(-daysToKeep), frequency)
+      ratio: resampleData(filteredRatio, frequency),
+      ratioSMA200d: resampleData(calculateSMA(ratioSeries, 200).slice(-horizon * 252), frequency),
+      ratioSMA200w: resampleData(calculateSMA(ratioSeries, 1000).slice(-horizon * 252), frequency),
+      benchmarkRatio: resampleData(stockData.map(s => ({
+        time: s.time,
+        value: (spyMap.get(s.time) || (spyData ? spyData[0].value : 1)) / (goldMap.get(s.time) || lastGold)
+      })).slice(-horizon * 252), frequency),
+      benchmarkSMA200d: [], benchmarkSMA200w: [], relativeRatio: [], relativeSMA200d: [], relativeSMA200w: [] 
     },
     metrics: {
       currentRatio,
       percentile: percentileValue,
       trend12m: calculateTrend(ratioSeries.slice(-252)),
       volatilityAnnual: calculateAnnualizedVolatility(ratioSeries.slice(-252), Frequency.DAILY),
-      chowder: { 
-        yield: Number((y * 100).toFixed(2)), 
-        dgr5y: Number((d * 100).toFixed(2)), 
-        chowderNumber: chowderNo, 
-        passGate: chowderNo >= 12, 
-        gateReason: "" 
-      },
-      dividendSafety: {
-        payoutEPS: Number(funds.payoutEPS.toFixed(1)),
-        payoutFCF: Number(funds.payoutFCF.toFixed(1)),
-        debtEbitda: Number(funds.debtEbitda.toFixed(2)),
-        interestCoverage: Number(funds.interestCoverage.toFixed(2))
-      },
-      expectedReturn: { conservative: y * 100 + d * 60, base: y * 100 + d * 100, optimistic: y * 100 + d * 140 },
+      chowder: { yield: y, dgr5y: d, chowderNumber: chowderNo, passGate: chowderNo >= 12, gateReason: "" },
+      dividendSafety: { payoutEPS: pEPS, payoutFCF: pFCF, debtEbitda: debt, interestCoverage: cov },
+      expectedReturn: { conservative: y + (d * 0.6), base: y + d, optimistic: y + (d * 1.4) },
       mosLadder: { zoneA: "", zoneB: "", zoneC: "" },
       scores: {
         core: { moat: moatScore, engine: engineScore, resilience: resilienceScore, total: (moatScore + engineScore + resilienceScore) / 3 },
-        mos: { valuation: 3.5, yieldHistory: 4.0, goldPercentile: gps, regime: 3.5, total: 3.8 },
-        goldPurchase: { price: gps, trend: 3, regime: 3.5, relativeStrength: 3, total: (0.4 * gps) + 2.4, interpretation: "" },
-        actionBadge: (chowderNo >= 12 && percentileValue < 50) ? (lang === Language.EN ? 'STRONG ACCUMULATE' : 'ACUMULACIÓN FUERTE') : (lang === Language.EN ? 'WATCH / HOLD' : 'VIGILAR / MANTENER')
+        mos: { valuation: 3, yieldHistory: yieldHistScore, goldPercentile: goldPriceScore, regime: 3, total: (3 + yieldHistScore + goldPriceScore + 3) / 4 },
+        goldPurchase: { 
+          price: goldPriceScore, 
+          trend: currentRatio > lastSMA200d ? 4.5 : 2, 
+          regime: 4, 
+          relativeStrength: 3, 
+          total: (goldPriceScore + 4.5 + 4 + 3) / 4, 
+          interpretation: "" 
+        },
+        actionBadge: chowderNo >= 12 ? "ACCUMULATE" : "HOLD"
       },
-      mosZone: percentileValue < 25 ? 'A' : percentileValue > 75 ? 'C' : 'B',
-      percentiles: { p10: getPercentileValue(metricsValues, 10), p25: getPercentileValue(metricsValues, 25), p50: getPercentileValue(metricsValues, 50), p75: getPercentileValue(metricsValues, 75), p90: getPercentileValue(metricsValues, 90) },
-      signals: { aboveSMA200d: currentRatio > (calculateSMA(ratioSeries, 200).pop()?.value || 0), aboveSMA200w: currentRatio > (calculateSMA(ratioSeries, 1000).pop()?.value || 0) }
+      mosZone: (percentileValue < 25 && resilienceScore > 3.5) ? 'A' : (percentileValue > 75 || resilienceScore < 2.5) ? 'C' : 'B',
+      percentiles: { 
+        p10: getPercentileValue(metricsValues, 10), 
+        p25: getPercentileValue(metricsValues, 25), 
+        p50: getPercentileValue(metricsValues, 50), 
+        p75: getPercentileValue(metricsValues, 75), 
+        p90: getPercentileValue(metricsValues, 90) 
+      },
+      signals: { aboveSMA200d: currentRatio > lastSMA200d, aboveSMA200w: currentRatio > lastSMA200w }
     }
   };
 };

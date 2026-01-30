@@ -3,7 +3,6 @@ import React, { useState, useRef } from 'react';
 import AnalysisForm from './components/AnalysisForm';
 import Chart from './components/Chart';
 import ReportView from './components/ReportView';
-import EditableMetrics from './components/EditableMetrics';
 import { AnalysisParams, RatioResult, Language } from './types';
 import { analyzeTicker } from './services/dataService';
 
@@ -33,21 +32,18 @@ const App: React.FC = () => {
     setLoading(true);
 
     try {
+      // Latencia mínima artificial para feedback visual (100ms)
       await new Promise(resolve => setTimeout(resolve, 100));
       const data = await analyzeTicker({ ...params, lang });
       setResult(data);
       setAnalysisKey(prev => prev + 1);
       setError(null);
     } catch (err: any) {
-      setError(err.message || (isEn ? 'Failed to fetch data.' : 'Error al obtener datos.'));
+      setError(err.message || (isEn ? 'Analysis failed.' : 'Error en el análisis.'));
       setResult(null);
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleUpdateResult = (updated: RatioResult) => {
-    setResult(updated);
   };
 
   const triggerDownloadPDF = async () => {
@@ -88,7 +84,6 @@ const App: React.FC = () => {
               </button>
             </nav>
 
-            {/* BOTÓN DE DESCARGA DE PDF REESTABLECIDO */}
             {activeTab === 'report' && result && (
               <button
                 onClick={triggerDownloadPDF}
@@ -145,18 +140,13 @@ const App: React.FC = () => {
           <div className="mt-12 flex flex-col items-center justify-center space-y-4">
             <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
             <p className="text-gray-500 font-bold uppercase tracking-tighter animate-pulse">
-              {isEn ? 'Deep-level Network Scan... Clearing previous state' : 'Escaneo profundo de red... Limpiando estado anterior'}
+              {isEn ? 'Running Quant Logic... Instant Calculations' : 'Ejecutando Lógica Quant... Cálculos Instantáneos'}
             </p>
           </div>
         )}
 
         {result && !loading && (
           <div key={analysisKey} className="mt-8 space-y-8 w-full">
-            <EditableMetrics 
-              result={result} 
-              onUpdate={handleUpdateResult} 
-            />
-
             {activeTab === 'charts' ? (
               <div className="w-full space-y-8">
                 <div className="border-b border-gray-200 pb-4">
@@ -205,12 +195,8 @@ const App: React.FC = () => {
                     ]}
                   />
                   <Chart 
-                    title="SPY / GOLD (MARKET REGIME)" 
+                    title="MOCK BENCHMARK / GOLD" 
                     data={result.data.benchmarkRatio} 
-                    overlayData={[
-                      { data: result.data.benchmarkSMA200d, color: '#94a3b8', name: 'SMA 200d' },
-                      { data: result.data.benchmarkSMA200w, color: '#f59e0b', name: 'SMA 200w' }
-                    ]}
                   />
                 </div>
               </div>

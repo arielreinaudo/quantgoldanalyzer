@@ -8,14 +8,14 @@ interface ExpandedReportProps {
 }
 
 const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
-  const { ticker, metrics } = result;
-  const { scores, chowder } = metrics;
+  const { metrics } = result;
+  const { scores } = metrics;
   const core = scores.core;
   const mos = scores.mos;
   const gold = scores.goldPurchase;
   const isEn = lang === Language.EN;
 
-  // --- LOGICA DE CORE SCORE (CALIDAD) ---
+  // --- LÓGICA DE INTERPRETACIÓN ---
   const getCoreInterpretation = (score: number) => {
     if (isEn) {
       if (score >= 4.5) return `The Core Score of ${score.toFixed(1)} indicates a world-class asset with impenetrable fundamentals.`;
@@ -30,7 +30,6 @@ const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
     }
   };
 
-  // --- LOGICA DE MOS SCORE (VALUACION/TIMING) ---
   const getMosInterpretation = (score: number) => {
     if (isEn) {
       if (score >= 4.0) return `Excellent Margin of Safety (${score.toFixed(1)}). Current price and yield offer a significant discount relative to historical norms.`;
@@ -43,7 +42,6 @@ const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
     }
   };
 
-  // --- LOGICA DE GOLD PURCHASE (OPORTUNIDAD TACTICA) ---
   const getGoldInterpretation = (score: number) => {
     if (isEn) {
       if (score >= 4.0) return `Strategic Gold Accumulation Zone (${score.toFixed(1)}). The asset is historically cheap when measured in hard currency (ounces).`;
@@ -69,8 +67,8 @@ const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
   };
 
   return (
-    <div className="mt-8 p-10 bg-slate-50 rounded-[3rem] border-2 border-slate-200">
-      <h2 className="text-3xl font-black text-slate-900 mb-10 uppercase tracking-tighter border-b-4 border-slate-900 pb-4">
+    <div className="mt-8 p-6 sm:p-10 bg-slate-50 rounded-[2rem] sm:rounded-[3rem] border-2 border-slate-200">
+      <h2 className="text-2xl sm:text-3xl font-black text-slate-900 mb-8 sm:mb-10 uppercase tracking-tighter border-b-4 border-slate-900 pb-4">
         {isEn ? 'Integrated Quant Analysis Report' : 'Reporte Integrado de Análisis Quant'}
       </h2>
 
@@ -171,7 +169,7 @@ const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
               <span className="text-xl font-black">{((core.total + mos.total + gold.total) / 3).toFixed(1)}</span>
             </div>
             <div className="h-10 w-[2px] bg-slate-700"></div>
-            <p className="text-[10px] font-bold text-slate-400 max-w-[150px] uppercase leading-tight">
+            <p className="text-[10px] font-bold text-slate-400 max-w-[150px] uppercase leading-tight text-left">
               {isEn ? "Final Quant Weighted Score (Quality + Value + Gold)" : "Score Final Ponderado (Calidad + Valor + Oro)"}
             </p>
           </div>

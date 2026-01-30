@@ -104,4 +104,13 @@ export interface AnalysisParams {
   provider: DataProvider;
   apiKey?: string;
   lang: Language;
+  // Manual overrides
+  manualPrice?: number;
+  manualGoldPrice?: number;
+  manualYield?: number;
+  manualDGR?: number;
+  manualPayoutEPS?: number;
+  manualPayoutFCF?: number;
+  manualDebtEbitda?: number;
+  manualInterestCoverage?: number;
 }
