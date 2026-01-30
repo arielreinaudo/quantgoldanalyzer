@@ -140,7 +140,7 @@ const App: React.FC = () => {
           <div className="mt-12 flex flex-col items-center justify-center space-y-4">
             <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
             <p className="text-gray-500 font-bold uppercase tracking-tighter animate-pulse">
-              {isEn ? 'Running Quant Logic... Instant Calculations' : 'Ejecutando Lógica Quant... Cálculos Instantáneos'}
+              {isEn ? 'Running Quant Logic... Fetching Real Data' : 'Ejecutando Lógica Quant... Obteniendo Datos Reales'}
             </p>
           </div>
         )}
@@ -195,7 +195,7 @@ const App: React.FC = () => {
                     ]}
                   />
                   <Chart 
-                    title="MOCK BENCHMARK / GOLD" 
+                    title={`${result.benchmarkTicker || 'SPY'} / GOLD`} 
                     data={result.data.benchmarkRatio} 
                   />
                 </div>

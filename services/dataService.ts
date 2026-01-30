@@ -9,9 +9,6 @@ import {
   resampleData
 } from '../lib/calculations';
 
-const PREFERRED_GOLD_KEY = 'quantgold_preferred_source';
-
-// Estrategia de Proxies para evadir bloqueos de CORS en cliente
 const PROXIES = [
   (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
@@ -48,13 +45,12 @@ async function fetchStooqData(symbol: string): Promise<PricePoint[] | null> {
 async function fetchYahooHistory(ticker: string): Promise<PricePoint[] | null> {
   const normalized = ticker.toUpperCase().trim();
   const now = Math.floor(Date.now() / 1000);
-  const start = now - (20 * 365 * 24 * 60 * 60); // 20 años
+  const start = now - (20 * 365 * 24 * 60 * 60); 
   const text = await fetchWithRetry(`https://query1.finance.yahoo.com/v7/finance/download/${normalized}?period1=${start}&period2=${now}&interval=1d&events=history&includeAdjustedClose=true`);
   if (text && text.includes('Date,Open,High,Low,Close')) {
     const data = text.split('\n').slice(1).map(line => {
       const p = line.split(',');
       if (p.length < 6) return null;
-      // Preferimos Adjusted Close para Yahoo
       const val = p[5] !== 'null' ? parseFloat(p[5]) : parseFloat(p[4]);
       return isNaN(val) ? null : { time: p[0].trim(), value: val };
     }).filter((d): d is PricePoint => d !== null);
@@ -85,7 +81,6 @@ async function getPrioritizedGoldData(): Promise<{ data: PricePoint[], isProxy: 
 export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult> => {
   const { ticker, horizon, frequency, benchmark, lang } = params;
 
-  // 1. FETCHING REAL DATA
   const stockDataPromise = fetchStooqData(ticker).then(d => d || fetchYahooHistory(ticker));
   const spyDataPromise = fetchStooqData(benchmark).then(d => d || fetchYahooHistory(benchmark));
   const goldResultPromise = getPrioritizedGoldData();
@@ -96,21 +91,23 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
     goldResultPromise
   ]);
 
-  if (!stockData) throw new Error(lang === Language.EN ? `Price history for ${ticker} not found.` : `No se encontró historia para ${ticker}.`);
+  if (!stockData || stockData.length === 0) throw new Error(lang === Language.EN ? `Price history for ${ticker} not found.` : `No se encontró historia para ${ticker}.`);
   if (!goldResult) throw new Error(lang === Language.EN ? "Gold price unavailable." : "Precio del oro no disponible.");
 
   let { data: goldData, isProxy: isGoldProxy } = goldResult;
-  let benchmarkData = spyData || stockData.map(s => ({ ...s, value: s.value * 1.1 })); // Fallback dummy
+  let benchmarkData = spyData || stockData.map(s => ({ ...s, value: s.value * 1.1 }));
 
-  // 2. APPLY MANUAL OVERRIDES FOR THE LAST POINT (Real-time update)
+  // Aplicar Overrides Manuales al último punto
   if (params.manualPrice && !isNaN(params.manualPrice)) {
     stockData[stockData.length - 1].value = params.manualPrice;
   }
   if (params.manualGoldPrice && !isNaN(params.manualGoldPrice)) {
     goldData[goldData.length - 1].value = params.manualGoldPrice;
   }
+  if (params.manualBenchmarkPrice && !isNaN(params.manualBenchmarkPrice) && benchmarkData.length > 0) {
+    benchmarkData[benchmarkData.length - 1].value = params.manualBenchmarkPrice;
+  }
 
-  // 3. CALCULO DE RATIOS (Alineación por fecha)
   const goldMap = new Map(goldData.map(d => [d.time, d.value]));
   const spyMap = new Map(benchmarkData.map(d => [d.time, d.value]));
   
@@ -121,14 +118,14 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
     return { time: s.time, value: s.value / lastGold };
   });
 
-  const currentRatio = stockData[stockData.length-1].value / (goldMap.get(stockData[stockData.length-1].time) || lastGold);
+  const lastStockPoint = stockData[stockData.length-1];
+  const lastGoldPrice = goldMap.get(lastStockPoint.time) || lastGold;
+  const currentRatio = lastStockPoint.value / lastGoldPrice;
   
-  // Filtramos por horizonte (años)
   const filteredRatio = ratioSeries.slice(-horizon * 252);
   const metricsValues = filteredRatio.map(d => d.value);
   const percentileValue = calculatePercentile(metricsValues, currentRatio);
 
-  // FUNDAMENTALES (Manuales del usuario)
   const y = params.manualYield ?? 0.5;
   const d = (params.manualDGR ?? 0.1) * 100;
   const pEPS = params.manualPayoutEPS ?? 40;
@@ -137,7 +134,6 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
   const cov = params.manualInterestCoverage ?? 10;
   const chowderNo = y + d;
 
-  // SCORING LOGIC
   const engineScore = Math.min(5, d / 2.5);
   let moatScore = 2.0;
   if (y > 2.5 && d > 8) moatScore = 5.0;
@@ -155,9 +151,19 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
   const lastSMA200d = calculateSMA(ratioSeries, 200).pop()?.value || currentRatio;
   const lastSMA200w = calculateSMA(ratioSeries, 1000).pop()?.value || currentRatio;
 
+  // Sincronizar serie de benchmark contra oro
+  const bDataSliced = stockData.slice(-horizon * 252);
+  const benchmarkRatioSeries = bDataSliced.map(s => {
+    // Si no hay precio de benchmark para esta fecha exacta, usamos el manual price como proxy para el cálculo final
+    const bPrice = spyMap.get(s.time) || (params.manualBenchmarkPrice || 1);
+    const gPrice = goldMap.get(s.time) || lastGold;
+    return { time: s.time, value: bPrice / gPrice };
+  });
+
   return {
     ticker: ticker.toUpperCase(),
     assetName: ticker,
+    benchmarkTicker: benchmark.toUpperCase(),
     horizonYears: horizon,
     frequency,
     dividendMode: params.dividendMode,
@@ -168,10 +174,7 @@ export const analyzeTicker = async (params: AnalysisParams): Promise<RatioResult
       ratio: resampleData(filteredRatio, frequency),
       ratioSMA200d: resampleData(calculateSMA(ratioSeries, 200).slice(-horizon * 252), frequency),
       ratioSMA200w: resampleData(calculateSMA(ratioSeries, 1000).slice(-horizon * 252), frequency),
-      benchmarkRatio: resampleData(stockData.map(s => ({
-        time: s.time,
-        value: (spyMap.get(s.time) || (spyData ? spyData[0].value : 1)) / (goldMap.get(s.time) || lastGold)
-      })).slice(-horizon * 252), frequency),
+      benchmarkRatio: resampleData(benchmarkRatioSeries, frequency),
       benchmarkSMA200d: [], benchmarkSMA200w: [], relativeRatio: [], relativeSMA200d: [], relativeSMA200w: [] 
     },
     metrics: {

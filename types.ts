@@ -31,6 +31,7 @@ export interface PricePoint {
 export interface RatioResult {
   ticker: string;
   assetName: string;
+  benchmarkTicker: string;
   horizonYears: number;
   frequency: Frequency;
   dividendMode: DividendMode;
@@ -107,6 +108,7 @@ export interface AnalysisParams {
   // Manual overrides
   manualPrice?: number;
   manualGoldPrice?: number;
+  manualBenchmarkPrice?: number;
   manualYield?: number;
   manualDGR?: number;
   manualPayoutEPS?: number;

@@ -16,9 +16,9 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
   const [horizon, setHorizon] = useState(15);
   const [frequency, setFrequency] = useState<Frequency>(Frequency.DAILY);
   const [benchmark, setBenchmark] = useState('SPY');
+  const [mBenchmarkPrice, setMBenchmarkPrice] = useState('595.00');
   const [dividendMode, setDividendMode] = useState<DividendMode>(DividendMode.PRICE_ONLY);
   
-  // Manual Fundamentals State
   const [mYield, setMYield] = useState('0.5');
   const [mDGR, setMDGR] = useState('10');
   const [mPayoutEPS, setMPayoutEPS] = useState('25');
@@ -26,7 +26,6 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
   const [mDebt, setMDebt] = useState('1.2');
   const [mCov, setMCov] = useState('15');
 
-  // Bulk Import State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
 
@@ -35,8 +34,8 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
   const parseNumber = (text: string, pattern: RegExp): string => {
     const match = text.match(pattern);
     if (match && match[1]) {
-      // Elimina comas de miles y símbolos de porcentaje o "x"
-      return match[1].replace(/,/g, '').replace(/%/g, '').replace(/x/g, '').trim();
+      // Limpieza profunda: quita $, %, comas de miles, x, etc.
+      return match[1].replace(/[$,%x]/g, '').replace(/,/g, '').trim();
     }
     return '';
   };
@@ -44,26 +43,50 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
   const handleBulkImport = () => {
     if (!bulkText.trim()) return;
 
-    // Regex para cada etiqueta específica
+    // 1. Tickers
     const tickerMatch = bulkText.match(/Ticker:\s*([A-Za-z.]+)/i);
-    const priceVal = parseNumber(bulkText, /Price:\s*([\d,.]+)/i);
+    const benchTickerMatch = bulkText.match(/Benchmark Ticker:\s*([A-Za-z.]+)/i);
+
+    // 2. Precios Manuales
+    const priceVal = parseNumber(bulkText, /Price:\s*([$\d,.]+)/i);
+    
+    // Gold Price Detection
+    const goldVal = 
+      parseNumber(bulkText, /Gold price today:\s*([$\d,.]+)/i) || 
+      parseNumber(bulkText, /Gold Price:\s*([$\d,.]+)/i) ||
+      parseNumber(bulkText, /Gold:\s*([$\d,.]+)/i);
+    
+    // Benchmark/SPY Price Detection - PRIORIDAD a "Bench Price (SPY)" solicitado por el usuario
+    const benchPriceVal = 
+      parseNumber(bulkText, /Bench Price \(SPY\):\s*([$\d,.]+)/i) || 
+      parseNumber(bulkText, /Bench Price:\s*([$\d,.]+)/i) ||
+      parseNumber(bulkText, /Benchmark Price:\s*([$\d,.]+)/i) || 
+      parseNumber(bulkText, /SPY Price:\s*([$\d,.]+)/i) ||
+      parseNumber(bulkText, /SPY:\s*([$\d,.]+)/i) ||
+      parseNumber(bulkText, /Benchmark:\s*([$\d,.]+)/i);
+
+    // 3. Fundamentales
     const yieldVal = parseNumber(bulkText, /Dividend Yield\s*\(%\):\s*([\d,.]+%?)/i);
     const dgrVal = parseNumber(bulkText, /Dividend Growth Rate 5Y\s*\(%\):\s*([\d,.]+%?)/i);
     const payoutEPSVal = parseNumber(bulkText, /Payout Ratio EPS\s*\(%\):\s*([\d,.]+%?)/i);
     const payoutFCFVal = parseNumber(bulkText, /Payout Ratio FCF\s*\(%\):\s*([\d,.]+%?)/i);
     const debtVal = parseNumber(bulkText, /Debt\s*\/\s*EBITDA\s*\(x\):\s*([\d,.]+x?)/i);
     const covVal = parseNumber(bulkText, /Interest Coverage\s*\(x\):\s*([\d,.]+x?)/i);
-    const goldVal = parseNumber(bulkText, /Gold price today:\s*([\d,.]+)/i);
 
+    // Update States
     if (tickerMatch) setTicker(tickerMatch[1].toUpperCase());
+    if (benchTickerMatch) setBenchmark(benchTickerMatch[1].toUpperCase());
+    
     if (priceVal) setMPriceActual(priceVal);
+    if (goldVal) setMGoldPrice(goldVal);
+    if (benchPriceVal) setMBenchmarkPrice(benchPriceVal);
+    
     if (yieldVal) setMYield(yieldVal);
     if (dgrVal) setMDGR(dgrVal);
     if (payoutEPSVal) setMPayoutEPS(payoutEPSVal);
     if (payoutFCFVal) setMPayoutFCF(payoutFCFVal);
     if (debtVal) setMDebt(debtVal);
     if (covVal) setMCov(covVal);
-    if (goldVal) setMGoldPrice(goldVal);
 
     setIsModalOpen(false);
     setBulkText('');
@@ -76,6 +99,7 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
       ticker: ticker.trim().toUpperCase(), 
       manualPrice: parseFloat(mPriceActual),
       manualGoldPrice: parseFloat(mGoldPrice),
+      manualBenchmarkPrice: parseFloat(mBenchmarkPrice),
       horizon, 
       frequency, 
       benchmark: benchmark.trim().toUpperCase(), 
@@ -95,6 +119,7 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
     setTicker('');
     setMPriceActual('');
     setMGoldPrice('');
+    setMBenchmarkPrice('');
     setHorizon(15);
     setFrequency(Frequency.DAILY);
     setBenchmark('SPY');
@@ -117,9 +142,9 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
         `}
       </style>
 
-      {/* Recuadro 1: Parámetros de Precio y Horizonte */}
+      {/* Row Principal: Precios y Horizonte */}
       <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
-        <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-7 gap-4 items-end">
+        <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-8 gap-4 items-end">
           <div>
             <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Ticker</label>
             <input
@@ -195,6 +220,19 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
           </div>
 
           <div>
+            <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">{isEn ? 'Benchmark Price' : 'Benchmark Price'}</label>
+            <input
+              type="number"
+              step="0.01"
+              value={mBenchmarkPrice}
+              onChange={(e) => setMBenchmarkPrice(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none transition-all font-bold text-gray-900 font-mono"
+              placeholder="0.00"
+              required
+            />
+          </div>
+
+          <div>
             <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">{isEn ? 'Dividends' : 'Dividendos'}</label>
             <select
               value={dividendMode}
@@ -208,7 +246,7 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
         </div>
       </div>
 
-      {/* Recuadro 2: Fundamentales Manuales */}
+      {/* Row: Fundamentales */}
       <div className="bg-white p-6 rounded-2xl shadow-lg border border-gray-100">
         <div className="flex justify-between items-center mb-4 border-b border-gray-50 pb-2">
           <h3 className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] flex items-center gap-2">
@@ -287,7 +325,7 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
         </div>
       </div>
 
-      {/* Botonera de Acción */}
+      {/* Footer del Form: Botones */}
       <div className="flex justify-end gap-3 mt-4">
         <button
           type="button"
@@ -309,7 +347,7 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
         </button>
       </div>
 
-      {/* Modal de Importación Masiva */}
+      {/* Modal: Bulk Import */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl border border-gray-100 p-8 transform animate-in slide-in-from-bottom-4 duration-300">
@@ -329,14 +367,14 @@ const AnalysisForm: React.FC<AnalysisFormProps> = ({ onAnalyze, onReset, isLoadi
 
             <p className="text-[10px] text-gray-400 font-bold uppercase mb-4 leading-relaxed">
               {isEn 
-                ? 'Paste the technical block (Ticker, Price, Yield, DGR, Payout, Debt, Coverage, Gold price) to populate all fields instantly.' 
-                : 'Pega el bloque técnico (Ticker, Precio, Yield, DGR, Payout, Deuda, Cobertura, Precio Oro) para completar todos los campos al instante.'}
+                ? 'Paste the technical block to populate all fields instantly.' 
+                : 'Pega el bloque técnico para completar todos los campos al instante.'}
             </p>
 
             <textarea
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
-              placeholder={`Ticker: MO\nPrice: 59.76\nDividend Yield (%): 6.70%\n...`}
+              placeholder={`Ticker: MO\nPrice: $59.76\nBench Price (SPY): $595.00\nGold Price: $2650.00\n...`}
               className="w-full h-48 bg-gray-50 border border-gray-200 rounded-2xl p-4 font-mono text-xs focus:ring-2 focus:ring-blue-500 outline-none resize-none transition-all placeholder:text-gray-300"
             />
 
