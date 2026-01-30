@@ -10,6 +10,7 @@ const App: React.FC = () => {
   const [result, setResult] = useState<RatioResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryStatus, setRetryStatus] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'charts' | 'report'>('charts');
   const [lang, setLang] = useState<Language>(Language.EN);
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
@@ -23,26 +24,52 @@ const App: React.FC = () => {
     setResult(null);
     setError(null);
     setLoading(false);
+    setRetryStatus(null);
     setAnalysisKey(prev => prev + 1);
   };
+
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
   const handleAnalyze = async (params: AnalysisParams) => {
     setResult(null);
     setError(null);
     setLoading(true);
+    setRetryStatus(null);
 
-    try {
-      // Latencia mínima artificial para feedback visual (100ms)
-      await new Promise(resolve => setTimeout(resolve, 100));
-      const data = await analyzeTicker({ ...params, lang });
-      setResult(data);
-      setAnalysisKey(prev => prev + 1);
-      setError(null);
-    } catch (err: any) {
-      setError(err.message || (isEn ? 'Analysis failed.' : 'Error en el análisis.'));
-      setResult(null);
-    } finally {
-      setLoading(false);
+    const maxRetries = 3;
+    let currentAttempt = 0;
+
+    while (currentAttempt <= maxRetries) {
+      try {
+        // Latencia mínima artificial para feedback visual (100ms)
+        await sleep(100);
+        const data = await analyzeTicker({ ...params, lang });
+        setResult(data);
+        setAnalysisKey(prev => prev + 1);
+        setError(null);
+        setRetryStatus(null);
+        setLoading(false);
+        return; // Éxito, salimos de la función
+      } catch (err: any) {
+        if (currentAttempt < maxRetries) {
+          currentAttempt++;
+          // Iniciamos la cuenta regresiva de 30 segundos
+          for (let sec = 30; sec > 0; sec--) {
+            setRetryStatus(isEn 
+              ? `Attempt ${currentAttempt}/${maxRetries} failed. Retrying in ${sec}s...` 
+              : `Intento ${currentAttempt}/${maxRetries} fallido. Reintentando en ${sec}s...`);
+            await sleep(1000);
+          }
+          setRetryStatus(isEn ? 'Retrying now...' : 'Reintentando ahora...');
+        } else {
+          // Agotamos los reintentos
+          setError(err.message || (isEn ? 'Analysis failed after multiple attempts.' : 'El análisis falló tras varios intentos.'));
+          setResult(null);
+          setRetryStatus(null);
+          setLoading(false);
+          return;
+        }
+      }
     }
   };
 
@@ -137,11 +164,18 @@ const App: React.FC = () => {
         )}
 
         {loading && (
-          <div className="mt-12 flex flex-col items-center justify-center space-y-4">
+          <div className="mt-12 flex flex-col items-center justify-center space-y-4 text-center">
             <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-gray-500 font-bold uppercase tracking-tighter animate-pulse">
-              {isEn ? 'Running Quant Logic... Fetching Real Data' : 'Ejecutando Lógica Quant... Obteniendo Datos Reales'}
-            </p>
+            <div className="space-y-1">
+              <p className="text-gray-500 font-bold uppercase tracking-tighter animate-pulse">
+                {retryStatus ? retryStatus : (isEn ? 'Running Quant Logic... Fetching Real Data' : 'Ejecutando Lógica Quant... Obteniendo Datos Reales')}
+              </p>
+              {retryStatus && (
+                <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest">
+                  {isEn ? 'Waiting for stable connection' : 'Esperando conexión estable'}
+                </p>
+              )}
+            </div>
           </div>
         )}
 

@@ -54,6 +54,19 @@ const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
     }
   };
 
+  const getLadderInterpretation = () => {
+    const zone = metrics.mosZone;
+    if (isEn) {
+      if (zone === 'A') return "Priority Tactical Window. The convergence of high percentile yield (> p70) and extreme gold-relative discount (< p25) justifies maximum conviction size. The risk/reward profile is exceptionally skewed towards the investor.";
+      if (zone === 'B') return "Standard Accumulation Phase. The asset is below its historical median valuation in gold terms. Capital deployment should be steady but contingent on the 200-day trend remaining constructive or showing signs of bottoming.";
+      return "Risk Management Phase. The current Gold Ratio exceeds the 75th percentile, indicating price exhaustion. New capital is inefficient here; focus should be on dividend reinvestment only while monitoring for a possible exit if fundamentals deteriorate.";
+    } else {
+      if (zone === 'A') return "Ventana Táctica de Prioridad. La convergencia de un yield de alto percentil (> p70) y un descuento extremo respecto al oro (< p25) justifica un tamaño de posición máximo. El perfil riesgo/recompensa está excepcionalmente sesgado a favor del inversor.";
+      if (zone === 'B') return "Fase de Acumulación Estándar. El activo está por debajo de su valuación media histórica medida en oro. El despliegue de capital debe ser constante pero supeditado a que la tendencia de 200 días sea constructiva o muestre señales de suelo.";
+      return "Fase de Gestión de Riesgo. El Ratio Oro actual supera el percentil 75, indicando agotamiento de precio. El capital nuevo es ineficiente aquí; el enfoque debe limitarse a la reinversión de dividendos mientras se monitorea una posible salida si los fundamentales se deterioran.";
+    }
+  };
+
   const getConclusionText = (score: number) => {
     if (isEn) {
       if (score >= 4.0) return "STRATEGIC APPROVAL";
@@ -72,10 +85,42 @@ const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
         {isEn ? 'Integrated Quant Analysis Report' : 'Reporte Integrado de Análisis Quant'}
       </h2>
 
-      {/* SECCIÓN 1: CORE SCORE */}
+      {/* SECCIÓN 1: MOS LADDER - PLAN DE EJECUCIÓN (AHORA PRIMERO) */}
       <section className="mb-12">
         <div className="flex justify-between items-end mb-4 border-b border-slate-200 pb-2">
-          <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">1. Core Quality Score ({core.total.toFixed(1)}/5)</h3>
+          <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">1. Execution Plan Interpretation (MOS Ladder)</h3>
+          <span className={`text-xs font-black px-3 py-1 rounded-full ${
+            metrics.mosZone === 'A' ? 'bg-green-100 text-green-700' : 
+            metrics.mosZone === 'B' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+          }`}>
+            {isEn ? `CURRENT: ZONE ${metrics.mosZone}` : `ACTUAL: ZONA ${metrics.mosZone}`}
+          </span>
+        </div>
+        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+          <p className="text-lg font-bold text-slate-800 leading-tight">
+            {getLadderInterpretation()}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-slate-100">
+            <div className={`space-y-2 ${metrics.mosZone === 'A' ? 'opacity-100' : 'opacity-40'}`}>
+              <h4 className="text-[10px] font-black text-green-600 uppercase tracking-widest">Zone A (Value Focus)</h4>
+              <p className="text-xs text-slate-500">{isEn ? "Focus on deep underlying value. The gold ratio suggests the stock is on 'clearance' relative to hard assets." : "Foco en valor intrínseco profundo. El ratio oro sugiere que la acción está en 'liquidación' respecto a activos duros."}</p>
+            </div>
+            <div className={`space-y-2 ${metrics.mosZone === 'B' ? 'opacity-100' : 'opacity-40'}`}>
+              <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-widest">Zone B (Trend Focus)</h4>
+              <p className="text-xs text-slate-500">{isEn ? "Focus on constructive accumulation. Price is reasonable and allows building size as trend confirms." : "Foco en acumulación constructiva. El precio es razonable y permite armar posición mientras se confirma tendencia."}</p>
+            </div>
+            <div className={`space-y-2 ${metrics.mosZone === 'C' ? 'opacity-100' : 'opacity-40'}`}>
+              <h4 className="text-[10px] font-black text-amber-600 uppercase tracking-widest">Zone C (Safety Focus)</h4>
+              <p className="text-xs text-slate-500">{isEn ? "Focus on capital preservation. Overvaluation makes new entry risky. Protect gains." : "Foco en preservación de capital. La sobrevaluación hace riesgosa la nueva entrada. Proteger ganancias."}</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* SECCIÓN 2: CORE QUALITY SCORE (AHORA SEGUNDO) */}
+      <section className="mb-12">
+        <div className="flex justify-between items-end mb-4 border-b border-slate-200 pb-2">
+          <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">2. Core Quality Score ({core.total.toFixed(1)}/5)</h3>
           <span className="text-xs font-bold text-slate-800 uppercase">{getConclusionText(core.total)}</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -99,10 +144,10 @@ const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
         </div>
       </section>
 
-      {/* SECCIÓN 2: TIMING (MOS) */}
+      {/* SECCIÓN 3: TIMING (MOS) */}
       <section className="mb-12">
         <div className="flex justify-between items-end mb-4 border-b border-slate-200 pb-2">
-          <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">2. Timing & Valuation Score ({mos.total.toFixed(1)}/5)</h3>
+          <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">3. Timing & Valuation Score ({mos.total.toFixed(1)}/5)</h3>
           <span className="text-xs font-bold text-slate-800 uppercase">{getConclusionText(mos.total)}</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -126,10 +171,10 @@ const ExpandedReport: React.FC<ExpandedReportProps> = ({ result, lang }) => {
         </div>
       </section>
 
-      {/* SECCIÓN 3: GOLD PURCHASE */}
+      {/* SECCIÓN 4: GOLD PURCHASE */}
       <section className="mb-12">
         <div className="flex justify-between items-end mb-4 border-b border-slate-200 pb-2">
-          <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">3. Gold Purchase Opportunity ({gold.total.toFixed(1)}/5)</h3>
+          <h3 className="text-sm font-black text-slate-400 uppercase tracking-widest">4. Gold Purchase Opportunity ({gold.total.toFixed(1)}/5)</h3>
           <span className="text-xs font-bold text-slate-800 uppercase">{getConclusionText(gold.total)}</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
